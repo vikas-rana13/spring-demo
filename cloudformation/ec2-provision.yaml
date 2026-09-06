@@ -1,37 +1,37 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Dynamic on-demand stack with auto-configured Java 25 Spring Boot environment.'
+Description: 'Enterprise-grade, fully parameterized application hosting stack.'
 
 Parameters:
   AppName:
     Type: String
-    Description: 'The name of the backend application.'
+    Description: 'Name of the business service.'
   KeyName:
     Type: 'AWS::EC2::KeyPair::KeyName'
-    Description: 'Existing AWS KeyPair for SSH access.'
+    Description: 'KeyPair for SSH management.'
+  AppPort:
+    Type: Number
+    Default: 8080
+    Description: 'The port the application binds to.'
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
-    Description: Automatically fetches the latest Amazon Linux 2023 AMI ID from AWS Systems Manager
 
 Resources:
-  # Custom Security Group allowing standard Spring Boot port and SSH
   AppSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: !Sub 'Security Group for ${AppName}'
       SecurityGroupIngress:
-        # Open SSH Port 22
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-        # Open Standard Spring Boot Port 8080
+        # Dynamic Application Port Authorization
         - IpProtocol: tcp
-          FromPort: 8081
-          ToPort: 8081
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
           CidrIp: 0.0.0.0/0
 
-  # EC2 Web Server Instance
   AppEC2Instance:
     Type: 'AWS::EC2::Instance'
     Properties:
@@ -40,25 +40,11 @@ Resources:
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
         - !Ref AppSecurityGroup
-      # Bootstrap script: Runs automatically on the virtual machine's first boot
+      # Generic bootstrap to enable remote workspace management
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          # 1. Download and Install OpenJDK 25
-          cd /opt
-          curl -L https://download.oracle.com/java/25/latest/jdk-25_linux-x64_bin.tar.gz -o jdk-25.tar.gz
-          tar -zxvf jdk-25.tar.gz
-          
-          # Setup clean system-wide symbolic links for Java 25
-          JDK_DIR=$(ls -d jdk-25*)
-          ln -s /opt/$JDK_DIR /opt/jdk-25
-          ln -sf /opt/jdk-25/bin/java /usr/bin/java
-          ln -sf /opt/jdk-25/bin/javac /usr/bin/javac
-          
-          # Verify Java version in system boot logs
-          java -version
-          
-          # 2. Setup a clean folder for the Spring Boot JAR
+          # Securely establish generic workspace for deploying scripts
           mkdir -p /home/ec2-user/app
           chown -R ec2-user:ec2-user /home/ec2-user/app
           chmod -R 755 /home/ec2-user/app
@@ -68,5 +54,5 @@ Resources:
 
 Outputs:
   EC2PublicIP:
-    Description: 'The public IP of your newly created server'
+    Description: 'Public target IP of the instance.'
     Value: !GetAtt AppEC2Instance.PublicIp
