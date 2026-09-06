@@ -37,8 +37,10 @@ else
     sudo curl -L "https://download.oracle.com/java/${JAVA_VERSION}/latest/jdk-${JAVA_VERSION}_linux-x64_bin.tar.gz" -o "jdk-${JAVA_VERSION}.tar.gz"
     sudo tar -zxvf "jdk-${JAVA_VERSION}.tar.gz"
     
+    # 🌟 ENTERPRISE FIX: Match directories only (via trailing slash) & isolate the clean folder name
+    JDK_DIR=$(ls -d jdk-${JAVA_VERSION}*/ | head -n 1 | cut -d'/' -f1)
+    
     # Establish system symlinks
-    JDK_DIR=$(ls -d jdk-${JAVA_VERSION}*)
     sudo ln -sfn "/opt/$JDK_DIR" "/opt/jdk-${JAVA_VERSION}"
     sudo ln -sf "/opt/jdk-${JAVA_VERSION}/bin/java" /usr/bin/java
     sudo ln -sf "/opt/jdk-${JAVA_VERSION}/bin/javac" /usr/bin/javac
