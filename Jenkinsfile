@@ -1,13 +1,11 @@
 pipeline {
     agent any
 
-    // 1. Tell Jenkins to use your globally configured Maven and JDK 25 installations
     tools {
-        maven 'jenkins-maven'  // Map your Maven installation name
-        jdk 'jenkins-jdk-25'   // Map your JDK 25 installation name in Jenkins Tools
+        maven 'jenkins-maven'
+        jdk 'jenkins-jdk-25'
     }
 
-    // 2. Separated Build and Test interactive parameter blocks
     parameters {
         booleanParam(name: 'BUILD', defaultValue: true, description: 'Compile the Java source code and package JAR?')
         booleanParam(name: 'TEST', defaultValue: true, description: 'Run Maven unit and integration tests?')
@@ -15,22 +13,26 @@ pipeline {
         string(name: 'APP_NAME', defaultValue: 'spring-boot-backend', description: 'Unique name for your application and AWS stack')
     }
 
+    // Centralized variable orchestration
     environment {
-        AWS_REGION = 'ap-southeast-2'
-        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
+        AWS_REGION      = 'ap-southeast-2'
+        APP_PORT        = '8081'                  // Target App Execution Port
+        APP_USER        = 'ec2-user'              // Target Linux Deployment OS User
+        APP_DIR         = '/home/ec2-user/app'    // Deploy Target directory
+        JAR_NAME        = 'app.jar'               // Unified server-side executable name
+        JAVA_VERSION    = '25'                    // Targeted platform Java execution environment
+        PATH            = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     }
 
     stages {
-        // 3. SEPARATED BUILD STAGE: Packages your application, bypassing the test suite
         stage('Compile & Package') {
             when { expression { params.BUILD } }
             steps {
-                echo "=== Compiling Java 25 source code and generating executable JAR ==="
+                echo "=== Compiling Java ${env.JAVA_VERSION} codebase ==="
                 sh "mvn clean package -DskipTests" 
             }
         }
 
-        // 4. SEPARATED TEST STAGE: Runs unit tests independently
         stage('Execute Unit Tests') {
             when { expression { params.TEST } }
             steps {
@@ -39,27 +41,25 @@ pipeline {
             }
         }
 
-        // 5. Provision AWS Infrastructure using CloudFormation
         stage('AWS CloudFormation Provisioning') {
             when { expression { params.DEPLOY } }
             steps {
-                echo "=== Deploying/Updating AWS Infrastructure Stack: ${params.APP_NAME}-stack ==="
+                echo "=== Deploying/Updating AWS Infrastructure Stack ==="
+                // Dynamic CFN Parameter Override mapping to our ENV block variable
                 sh """
                 aws cloudformation deploy \
                   --stack-name "${params.APP_NAME}-stack" \
                   --template-file cloudformation/ec2-provision.yaml \
-                  --parameter-overrides AppName="${params.APP_NAME}" KeyName="ec2-key" \
+                  --parameter-overrides AppName="${params.APP_NAME}" KeyName="ec2-key" AppPort="${env.APP_PORT}" \
                   --capabilities CAPABILITY_IAM \
                   --region ${env.AWS_REGION}
                 """
             }
         }
 
-        // 6. Securely deploy the backend JAR and manage the background service
         stage('Deploy Backend to EC2') {
             when { expression { params.DEPLOY } }
             steps {
-                echo "=== Fetching Public IP for Stack: ${params.APP_NAME}-stack ==="
                 script {
                     def ec2Ip = sh(
                         script: "aws cloudformation describe-stacks --stack-name \"${params.APP_NAME}-stack\" --query \"Stacks[0].Outputs[?OutputKey=='EC2PublicIP'].OutputValue\" --output text --region ${env.AWS_REGION}",
@@ -69,27 +69,37 @@ pipeline {
                     echo "Target EC2 Public IP: ${ec2Ip}"
                     
                     if (ec2Ip == "None" || ec2Ip == "") {
-                        error "Deployment aborted: Could not retrieve a valid Public IP from CloudFormation output."
+                        error "Deployment aborted: Could not retrieve a valid Public IP."
                     }
                     
-                    echo "=== Transferring Jar and Launching App ==="
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                        echo "=== Transferring JAR and Standalone Scripts to EC2 ==="
+                        sh "scp -o StrictHostKeyChecking=no -i \$SSH_KEY target/*.jar ${env.APP_USER}@${ec2Ip}:${env.APP_DIR}/${env.JAR_NAME}"
+                        sh "scp -o StrictHostKeyChecking=no -i \$SSH_KEY scripts/pre.sh ${env.APP_USER}@${ec2Ip}:${env.APP_DIR}/pre.sh"
+                        sh "scp -o StrictHostKeyChecking=no -i \$SSH_KEY scripts/start-service.sh ${env.APP_USER}@${ec2Ip}:${env.APP_DIR}/start-service.sh"
                         
-                        // Step A: Securely copy the freshly compiled JAR file to the app directory
-                        sh "scp -o StrictHostKeyChecking=no -i \$SSH_KEY target/*.jar ec2-user@${ec2Ip}:/home/ec2-user/app/app.jar"
-                        
-                        // Step B: SSH into the server, kill the previously running Spring Boot app (if any), 
-                        // and start the new JAR running in the background.
+                        echo "=== Running Environmental Pre-requisites ==="
+                        // Injecting local Jenkins variables into SSH environment so script reads them dynamically
                         sh """
-                        ssh -o StrictHostKeyChecking=no -i \$SSH_KEY ec2-user@${ec2Ip} '
-                            echo "=== Managing Service Processes ==="
-                            # Find and gracefully terminate any running Java app processes
-                            pgrep -f app.jar && kill -15 \$(pgrep -f app.jar) || echo "No active Java service detected."
+                        ssh -o StrictHostKeyChecking=no -i \$SSH_KEY ${env.APP_USER}@${ec2Ip} '
+                            export JAVA_VERSION="${env.JAVA_VERSION}"
+                            export APP_USER="${env.APP_USER}"
+                            export APP_DIR="${env.APP_DIR}"
                             
-                            # Start Spring Boot app in background (nohup keeps it running after SSH session disconnects)
-                            nohup java -jar /home/ec2-user/app/app.jar > /home/ec2-user/app/app.log 2>&1 &
+                            chmod +x ${env.APP_DIR}/pre.sh
+                            ${env.APP_DIR}/pre.sh
+                        '
+                        """
+                        
+                        echo "=== Booting Service Daemon ==="
+                        sh """
+                        ssh -o StrictHostKeyChecking=no -i \$SSH_KEY ${env.APP_USER}@${ec2Ip} '
+                            export APP_PORT="${env.APP_PORT}"
+                            export APP_DIR="${env.APP_DIR}"
+                            export JAR_NAME="${env.JAR_NAME}"
                             
-                            echo "=== Spring Boot (Java 25) Booted in Background! ==="
+                            chmod +x ${env.APP_DIR}/start-service.sh
+                            ${env.APP_DIR}/start-service.sh
                         '
                         """
                     }
