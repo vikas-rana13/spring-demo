@@ -17,8 +17,8 @@ echo "========================================="
 # 1. Linux Package Repository Updates & Utility Install (Using DNF)
 echo "[INFO] Syncing DNF package repository..."
 sudo dnf update -y
-echo "[INFO] Ingesting core utilities (lsof, curl, tar)..."
-sudo dnf install lsof curl tar -y
+echo "[INFO] Ingesting core utilities (lsof, tar)..."
+sudo dnf install lsof tar -y
 
 # 2. Establish Dedicated System Application User
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
