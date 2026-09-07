@@ -98,7 +98,7 @@ pipeline {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_HUB_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         
                         echo "=== Building Docker Image Locally ==="
-                        sh "docker build -t ${DOCKER_USER}/${env.IMAGE_NAME}:${env.IMAGE_TAG} ."
+                        sh "docker build --platform linux/amd64 -t ${DOCKER_USER}/${env.IMAGE_NAME}:${env.IMAGE_TAG} ."
 
                         echo "=== Authenticating Jenkins Controller against Docker Hub ==="
                         sh "echo \$DOCKER_PASS | docker login --username \$DOCKER_USER --password-stdin"
