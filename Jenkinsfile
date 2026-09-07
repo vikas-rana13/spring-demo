@@ -116,7 +116,7 @@ pipeline {
                 script {
                     // Fetch the target EC2 Public IP from CloudFormation output dynamically
                     def ec2Ip = sh(
-                        script: "aws cloudformation describe-stacks --stack-name \"${params.APP_NAME}-stack\" --query \"Stacks.Outputs[?OutputKey=='EC2PublicIP'].OutputValue\" --output text --region ${env.AWS_REGION}",
+                        script: "aws cloudformation describe-stacks --stack-name \"${params.APP_NAME}-stack\" --query \"Stacks[0].Outputs[?OutputKey=='EC2PublicIP'].OutputValue\" --output text --region ${env.AWS_REGION}",
                         returnStdout: true
                     ).trim()
                     
