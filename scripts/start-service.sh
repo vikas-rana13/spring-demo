@@ -1,69 +1,61 @@
 #!/bin/bash
+# ==============================================================================
+# start-service.sh - Secure Container Lifecycle Management & Rollouts (Docker Hub)
+# ==============================================================================
+# Strict mode: exit on error (-e), unset variables (-u), and pipeline failures (-o)
 set -euo pipefail
 
-# Enterprise Defaults (Falls back to safe values for manual SSH execution)
+# Enterprise parameters passed dynamically from Jenkins SSH
+DOCKER_USER="${DOCKER_USER}"
+DOCKER_PASSWORD="${DOCKER_PASSWORD}"
+IMAGE_NAME="${IMAGE_NAME}"
+IMAGE_TAG="${IMAGE_TAG}"
 PORT="${APP_PORT:-8080}"
-APP_DIR="${APP_DIR:-/home/$(whoami)/app}"
-JAR_NAME="${JAR_NAME:-app.jar}"
-APP_LOG="${APP_LOG:-app.log}"
+
+CONTAINER_NAME="spring-boot-app"
+FULL_IMAGE_PATH="${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
 
 echo "============================================="
-echo "=== Service Lifecycle Management ==="
-echo "=== Target Directory: ${APP_DIR} ==="
-echo "=== Application Port: ${PORT} ==="
+echo "=== Container Lifecycle Management        ==="
+echo "=== Deploying Image: ${FULL_IMAGE_PATH} ==="
+echo "=== Application Port: ${PORT}             ==="
 echo "============================================="
 
-cd "${APP_DIR}"
+# 1. Authenticate against Docker Hub dynamically
+echo "[INFO] Authenticating against Docker Hub..."
+echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USER}" --password-stdin
 
-# 1. Dynamic Port Search (Port-centric Process Cleanup)
-echo "Locating processes bound to Port ${PORT}..."
-if command -v lsof &> /dev/null; then
-    OLD_PID=$(lsof -t -i:"${PORT}" || true)
-else
-    # Fallback to netstat if running on a restricted environment
-    OLD_PID=$(netstat -nlp 2>/dev/null | grep ":${PORT} " | awk '{print $7}' | cut -d'/' -f1 || true)
+# 2. Pull the specific version-tagged image from Docker Hub
+echo "[INFO] Pulling container image from Docker Hub..."
+docker pull "${FULL_IMAGE_PATH}"
+
+# 3. Stop and remove the old running container version (if it exists)
+echo "[INFO] Terminating previous container release..."
+if docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}\$"; then
+    docker stop "${CONTAINER_NAME}" || true
+    docker rm "${CONTAINER_NAME}" || true
+    echo "[INFO] Previous container cleared."
 fi
 
-if [ -n "${OLD_PID}" ]; then
-    echo "Found active application running on PID: ${OLD_PID}"
-    echo "Terminating service gracefully (SIGTERM)..."
-    kill -15 "${OLD_PID}"
-    
-    # Grace period loop (up to 10s)
-    for i in {1..10}; do
-        if ! kill -0 "${OLD_PID}" 2>/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-    
-    # Hard kill if process refuses to close
-    if kill -0 "${OLD_PID}" 2>/dev/null; then
-        echo "Process did not shut down in time. Force-killing (SIGKILL)..."
-        kill -9 "${OLD_PID}"
-    fi
-    echo "Previous instance terminated successfully."
-else
-    echo "No active processes detected on Port ${PORT}."
-fi
+# 4. Launch the new isolated container sandbox
+echo "[INFO] Initializing new release..."
+docker run -d \
+  --name "${CONTAINER_NAME}" \
+  -p "${PORT}:${PORT}" \
+  -e PORT="${PORT}" \
+  --restart unless-stopped \
+  "${FULL_IMAGE_PATH}"
 
-# 2. Run Application Background Daemon
-if [ -f "${JAR_NAME}" ]; then
-    echo "Launching service daemon..."
-    nohup java -jar "${JAR_NAME}" > "${APP_LOG}" 2>&1 &
-    NEW_PID=$!
-    echo "Daemon active with PID: ${NEW_PID}"
-else
-    echo "Error: Target executable JAR (${APP_DIR}/${JAR_NAME}) is missing!" >&2
-    exit 1
-fi
-
-# 3. Dynamic Health / Startup Verification
-echo "Verifying health check socket binding..."
+# 5. Active Health Check / Verification
+echo "[INFO] Verifying container initialization status..."
 sleep 5
-if lsof -i:"${PORT}" &> /dev/null; then
-    echo "=== SUCCESS: Service launched successfully on Port ${PORT}! ==="
+if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}\$"; then
+    echo "=== SUCCESS: Container is live on Port ${PORT}! ==="
+    # Clean up unused old cached images to prevent host disk exhaustion
+    echo "[INFO] Pruning obsolete Docker cache..."
+    docker image prune -f
 else
-    echo "=== ERROR: Service failed to bind to Port ${PORT} within grace period. Check logs in ${APP_DIR}/${APP_LOG} ===" >&2
+    echo "=== ERROR: Container failed to start. Printing container logs: ===" >&2
+    docker logs "${CONTAINER_NAME}"
     exit 1
 fi
