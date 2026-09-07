@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Enterprise-grade, fully parameterized application hosting stack.'
+Description: 'Simplified AWS Stack for Docker Hub Deployments.'
 
 Parameters:
   AppName:
     Type: String
-    Description: 'Name of the business service.'
+    Description: 'The name of the application.'
   KeyName:
     Type: 'AWS::EC2::KeyPair::KeyName'
     Description: 'KeyPair for SSH management.'
@@ -17,6 +17,7 @@ Parameters:
     Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
 
 Resources:
+  # 1. Host Security Group (Firewall) - Only opens SSH and your Spring Boot Port
   AppSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -26,12 +27,12 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-        # Dynamic Application Port Authorization
         - IpProtocol: tcp
           FromPort: !Ref AppPort
           ToPort: !Ref AppPort
           CidrIp: 0.0.0.0/0
 
+  # 2. EC2 Web Server with Initial Directory Setup (No AWS ECR Roles needed!)
   AppEC2Instance:
     Type: 'AWS::EC2::Instance'
     Properties:
@@ -40,11 +41,10 @@ Resources:
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
         - !Ref AppSecurityGroup
-      # Generic bootstrap to enable remote workspace management
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          # Securely establish generic workspace for deploying scripts
+          # Setup workspace directory owned by ec2-user
           mkdir -p /home/ec2-user/app
           chown -R ec2-user:ec2-user /home/ec2-user/app
           chmod -R 755 /home/ec2-user/app
@@ -54,5 +54,5 @@ Resources:
 
 Outputs:
   EC2PublicIP:
-    Description: 'Public target IP of the instance.'
+    Description: 'Public IP of the instance.'
     Value: !GetAtt AppEC2Instance.PublicIp
